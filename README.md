@@ -24,7 +24,7 @@ Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 ```
 ​
 
-####Análisis de nmap###
+###Análisis de nmap###
 ```22 (SSH)```
 OpenSSH 9.2p1: Versión muy reciente y parcheada. Salvo por credenciales débiles (fuerza bruta), es un vector difícil de atacar inicialmente.
 ```80 (HTTP)```
@@ -95,87 +95,73 @@ Para funcionar, fail2ban necesita interactuar con el firewall (iptables o nftabl
 Por eso, el cliente tiene la capacidad de arrancar/parar servicios y, lo más importante, de cambiar configuraciones de ejecución.
 
 Primero mira qué servicios está protegiendo Fail2Ban:
+```bash
 sudo /usr/bin/fail2ban-client status
-​
-
+```
+<br>​
+<img width="1086" height="81" alt="jail" src="https://github.com/user-attachments/assets/69c7fdf4-fbed-4e68-a9fb-287e692e42d3" />
+<br>
 Como ya sabíamos que podíamos ejecutar fail2ban-client como root (por el sudo -l), necesitábamos saber dónde podíamos inyectar nuestro comando. Fail2Ban no es un bloque sólido; funciona mediante "Jails" (cárceles), que son reglas específicas para diferentes servicios.
-¿Qué es lo que nos dice este resultado?
-El resultado nos confirma dos cosas críticas:
+
+###¿Qué es lo que nos dice este resultado?###
+
 El servicio está activo: Si el comando responde, significa que el demonio de Fail2Ban está corriendo y podemos interactuar con él.
 Identificación de vectores (Jail list): Nos da el nombre exacto de las "cárceles" activas. Esto es como ver una lista de puertas. Cada nombre (sshd, mbilling_login, etc.) es un servicio que Fail2Ban está vigilando.
 Elegimos sshd de esa lista porque es el servicio más fácil de "atacar" desde fuera para forzar un baneo y disparar nuestra carga útil (payload).
-¿Cómo funciona técnicamente?
-Fail2Ban funciona con un modelo Cliente-Servidor:
-Servidor (fail2ban-server): Corre como root y es el que realmente ejecuta los comandos para banear gente.
-Cliente (fail2ban-client): Es el que tú usaste. Se comunica con el servidor para enviarle órdenes.
-Al tener permisos de sudo sobre el cliente, tienes el poder de decirle al servidor (que es root) que cambie su configuración. Es una Escalada de Privilegios por Delegación de Configuración.
-Ahora que sabemos que la jail sshd existe, el siguiente paso lógico es interrogar a esa jail para ver cómo banea a la gente. No todas las jails se comportan igual.
-Para eso, el comando que deberías explicar a continuación es el que usamos para ver las "acciones":
-
+```bash
 sudo /usr/bin/fail2ban-client get sshd actions
+```
 ​
 Este comando es el paso de reconocimiento interno definitivo. Sin la información que te dio este comando, el exploit habría fallado porque habrías estado disparando a ciegas.
-Aquí tienes el desglose detallado para tu aprendizaje y para el WriteUp:
-¿Qué significa cada parte del comando?
-sudo: Ejecuta el comando con los máximos privilegios (root). Como vimos en sudo -l, el usuario asterisk tiene permiso para usar este binario específico sin contraseña.
-/usr/bin/fail2ban-client: La herramienta que permite hablar con el servidor de Fail2Ban para consultar o cambiar reglas en tiempo real.
-get: Es el "verbo" de consulta. Le estás pidiendo al servicio que te entregue información específica.
-sshd: El nombre de la "cárcel" (jail) sobre la que quieres preguntar. La elegimos porque la vimos en el paso anterior (status).
-actions: El parámetro específico que quieres consultar. Le estás preguntando: "¿Qué haces exactamente cuando decides que vas a banear a alguien en esta cárcel?".
+<br>
+<img width="395" height="43" alt="multiport" src="https://github.com/user-attachments/assets/bcd1fe0a-fa2d-4e42-a0d9-4930e550e29f" />
+<br>
 
-¿Qué es lo que nos ha dicho el resultado?
+###¿Qué es lo que nos ha dicho el resultado?###
 Nos ha respondido: iptables-multiport.
 Esto es fundamental porque Fail2Ban no tiene una única forma de banear. Puede enviarte un email, puede bloquearte en un firewall diferente o puede usar el comando iptables. En este sistema, la acción configurada se llama específicamente iptables-multiport.
 ¿Por qué es esto importante? Porque para cambiar el comportamiento del baneo (el comando set), necesitas indicarle el nombre exacto de la acción que quieres "secuestrar". Si hubieras intentado cambiar una acción que no existe, el sistema te habría dado un error de comando inválido.
 ¿Por qué nos ha funcionado?
 Funciona por un concepto llamado Introspección de Configuración:
 Visibilidad total: El comando get te permite ver las "tripas" de la configuración de seguridad del sistema.
-Preparación del Payload: Al saber que la acción es iptables-multiport, ahora ya puedes construir el comando de ataque: "set sshd action iptables-multiport actionban...".
+Al saber que la acción es iptables-multiport, ahora ya puedes construir siguiente comando de ataque:
+
+```bash
 sudo /usr/bin/fail2ban-client set sshd action iptables-multiport actionban "chmod +s /bin/bash"
+```
 ​
-Este es el comando clave del "Weaponization" o armamento. Aquí es donde transformamos una herramienta de seguridad en nuestro vector de ataque para obtener privilegios de root.
-1. Desglose del comando paso a paso
-sudo /usr/bin/fail2ban-client: Ejecutamos el cliente de administración con permisos de superusuario (root), algo que se nos permite según el archivo sudoers.
-set sshd: Le indicamos al servidor que queremos modificar la configuración de la cárcel (jail) llamada sshd.
-action iptables-multiport: Especificamos exactamente qué acción queremos alterar (la que descubrimos en el paso anterior con el comando get).
-actionban: Este es el parámetro crítico. Es la instrucción que define: "¿Qué comando debe ejecutar el sistema cuando se decida banear una IP?". Por defecto, aquí suele haber un comando de iptables para bloquear el tráfico.
-"chmod +s /bin/bash": Aquí es donde inyectamos nuestra carga útil (payload). En lugar de bloquear una IP, le ordenamos al sistema que asigne el bit SUID a la Bash.
-Nota técnica: El bit SUID (+s) permite que cualquier usuario que ejecute ese archivo lo haga con los privilegios del propietario (en este caso, root).
-2. ¿Por qué hemos elegido este comando?
-Elegimos este método porque es discreto y extremadamente efectivo. En lugar de intentar explotar un fallo en el código del programa (un buffer overflow o algo complejo), estamos abusando de una funcionalidad legítima del software.
+<br>
+
+
 Fail2Ban está diseñado para ejecutar comandos del sistema como root. Nosotros simplemente hemos "reprogramado" qué comando debe ejecutar.
-3. ¿Por qué ha funcionado?
-Ha funcionado por tres razones:
-Confianza ciega: El servidor de Fail2Ban confía en lo que el cliente le dice (porque viene vía sudo). No verifica si el comando inyectado tiene algo que ver con un firewall; simplemente lo guarda para ejecutarlo más tarde.
-Privilegios heredados: Fail2Ban corre como un servicio del sistema con privilegios de root. Por lo tanto, cualquier comando que pongamos en actionban se ejecutará con esos mismos privilegios.
-Persistencia de configuración: El comando cambia la configuración en la memoria del servicio de forma inmediata.
-4. ¿Qué es lo que nos ha respondido el comando?
-En tu salida de terminal, el comando respondió:
-chmod +s /bin/bash
-Esto no es un error, es la confirmación del éxito. Cuando el cliente de Fail2Ban te devuelve el valor que acabas de introducir, significa que el servidor ha aceptado el cambio y que la nueva "regla de baneo" ya está activa en la memoria del sistema.
+
+
 En estos momentos Fail2Ban ahora está esperando a que alguien "se porte mal" en el SSH para ejecutar tu comando
 Tienes que intentar entrar por SSH con contraseñas falsas. No es para adivinar la contraseña, sino para que Fail2Ban diga: "¡Oye! Esta IP está intentando entrar a la fuerza, voy a banearla".
-La ejecución automática: Al banearte, el sistema ejecuta automáticamente tu chmod +s /bin/bash porque cree que es su comando de bloqueo normal.
-Entonces es cuando haces el ls -l /bin/bash para ver si la "s" mágica ha aparecido.
-ls -l /bin/bash
-​
+<br>
+<img width="657" height="234" alt="ssh" src="https://github.com/user-attachments/assets/d0f19484-7440-441d-a3a3-239c1d1c92ed" />
+<br>
 
-2. ¿Por qué lo llamamos "Trigger" y no "Fuerza Bruta" tradicional?
-En un ataque normal, la fuerza bruta busca entrar. Aquí, la fuerza bruta busca que nos echen.
-4. ¿Qué significa el comando ls -l /bin/bash?
-Este comando es tu verificación. Lo elegiste porque:
-Antes del baneo: Verías algo como rwxr-xr-x. (Bash normal).
-Después del baneo: Verías rwsr-xr-x.
+Entonces es cuando haces el ls -l /bin/bash para ver si la "s" mágica ha aparecido.
+```bash
+ls -l /bin/bash
+```
+<br>​
+<img width="556" height="60" alt="hinbash" src="https://github.com/user-attachments/assets/07772fe4-e4f7-46a8-9b70-87ea786dc5cd" />
+<br>
+
 Esa "s" significa que el bit SUID está activo. Es la confirmación de que Fail2Ban ha mordido el anzuelo y ha ejecutado tu comando como root.
 Este comando es el que efectivamente abre la puerta y te entrega el control total. Aquí tienes la explicación técnica de por qué es necesario y qué significa esa -p.
-¿Por qué hacemos este comando?
+
+<br>
+<img width="468" height="197" alt="ls -la" src="https://github.com/user-attachments/assets/ab01ec60-b73c-404f-b6f8-a93b225a273d" />
+<br>
+###¿Por qué hacemos este comando?###
 Aunque el comando anterior (chmod +s /bin/bash) tuvo éxito y convirtió a la Bash en un binario SUID, eso no te convierte en root automáticamente. El sistema de archivos ha cambiado, pero tu sesión actual de usuario sigue siendo la de asterisk.
 Necesitas ejecutar esa Bash modificada para que los privilegios de root se activen en tu terminal.
-¿Qué significa la p? (La parte más importante)
-Las versiones modernas de Linux (específicamente la Bash) tienen una medida de seguridad: si detectan que están siendo ejecutadas con el bit SUID (como root) pero por un usuario normal (como asterisk), la Bash suelta automáticamente esos privilegios por seguridad y te devuelve una shell de usuario normal.
-p significa "privileged" (privilegiado).
 Al añadir el parámetro p, le estás diciendo a la Bash: "No sueltes los privilegios de root, mantén el User ID efectivo (EUID) que te otorga el bit SUID".
-¿Qué nos dice la respuesta del sistema?
+
+###¿Qué nos dice la respuesta del sistema?###
 bash2#: Fíjate que el símbolo de tu terminal ha cambiado de $ (usuario normal) a # (superusuario). En el mundo Linux, el "almohadilla" o "hashtag" es el símbolo universal de que tienes el poder total.
 whoami -> root: Este es el veredicto final. El sistema operativo confirma que, para todos los efectos, ahora eres el usuario root.
 Ya somos root
