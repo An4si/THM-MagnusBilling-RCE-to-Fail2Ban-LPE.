@@ -25,18 +25,22 @@ Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 ​
 
 ###Análisis de nmap###
+<br>
 ```22 (SSH)```
 OpenSSH 9.2p1: Versión muy reciente y parcheada. Salvo por credenciales débiles (fuerza bruta), es un vector difícil de atacar inicialmente.
+<br>
 ```80 (HTTP)```
 Apache 2.4.62: MagnusBilling. Los CMS y paneles de gestión son siempre el eslabón más débil debido a su gran superficie de código expuesto.
 ```3306 (MySQL)```
+<br>
 MariaDB: Base de datos que almacena facturación y usuarios. Útil una vez dentro (Post-explotación) o para inyección SQL.
 ```5038 (Asterisk)```
+<br>
 Asterisk Manager: El "corazón" de la telefonía. Permite control de llamadas. Muy peligroso si se encuentran credenciales en el panel web.
 <br>
 ```Whatweb```
 ```http://10.81.152.90/mbilling [301 Moved Permanently] Apache[2.4.62], Country[RESERVED][ZZ], HTTPServer[Debian Linux][Apache/2.4.62 (Debian)], IP[10.81.152.90], RedirectLocation[http://10.81.152.90/mbilling/], Title[301 Moved Permanently]```
-
+<br>
 ​
 ```Gobuster```
 ```gobuster dir -u http://10.81.152.90  -w /usr/share/wordlists/dirbuster/directory-list-lowercase-2.3-medium.txt -x php,html.txt,bak```
